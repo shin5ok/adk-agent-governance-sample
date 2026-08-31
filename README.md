@@ -4,11 +4,38 @@
 （**Agent Identity / SPIFFE ID・Agent Registry・Agent Gateway・Model Armor**）を
 一通り動かすサンプルです。ローカル部分は API キーなしでも疎通確認まで動きます。
 
+## 構成
+
+```mermaid
+flowchart TB
+    subgraph caller["呼ぶ側 — サーブされない"]
+        ORCH["expense_orchestrator<br/>orchestrator/agent.py<br/>adk web . で起動"]
+        RA1["RemoteA2aAgent<br/>name=receipt_agent<br/>use_legacy=False"]
+        RA2["RemoteA2aAgent<br/>name=policy_agent<br/>use_legacy=False"]
+        ORCH --> RA1
+        ORCH --> RA2
+    end
+    subgraph served["公開側 — uvicorn でサーブ"]
+        subgraph S1["receipt-agent : 18001"]
+            APP1["a2a_app = to_a2a(root_agent, port=18001)<br/>agents/receipt_agent/agent.py"]
+            T1["tools<br/>extract_receipt / list_receipts"]
+            APP1 --> T1
+        end
+        subgraph S2["policy-agent : 18002"]
+            APP2["a2a_app = to_a2a(root_agent, port=18002)<br/>agents/policy_agent/agent.py"]
+            T2["tools<br/>check_policy"]
+            APP2 --> T2
+        end
+    end
+    RA1 -->|"1. GET /.well-known/agent-card.json"| APP1
+    RA1 -->|"2. A2A JSONRPC"| APP1
+    RA2 -->|"1. GET /.well-known/agent-card.json"| APP2
+    RA2 -->|"2. A2A JSONRPC"| APP2
 ```
-expense-orchestrator (呼ぶ側 / RemoteA2aAgent x2)
-   ├── receipt-agent  (公開側 :18001 / 領収書の読み取り)
-   └── policy-agent   (公開側 :18002 / 経費規程チェック)
-```
+
+**呼ぶ側と公開側は非対称**です。`receipt` / `policy` は `to_a2a()` 一行で ASGI アプリになり
+uvicorn がサーブしますが、オーケストレータはサーブされません（`adk web` で起動して
+`RemoteA2aAgent` として2体を呼ぶだけ）。この非対称性がこのリポジトリの構成の要です。
 
 検証環境: google-adk 2.8.0 / a2a-sdk 1.1.2 / Python 3.11
 
@@ -37,6 +64,31 @@ make run PY=/path/to/python
 → receipt_agent が内容を取り、policy_agent が規程判定し、
    R-1003（宿泊 45,000 円 > 上限 15,000 円）だけ違反として報告されます。
 
+### カード解決とポート整合
+
+エージェントの呼び出しは **カードを取る → カードに書かれた URL へ投げる** の2段構えです。
+`to_a2a(port=)` は bind せず「カードに載せる URL」を組み立てるだけなので、
+uvicorn の `--port` とズレると到達不能な URL が広告されます。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant MK as make run
+    participant UV as uvicorn
+    participant APP as a2a_app / to_a2a
+    participant RA as RemoteA2aAgent
+    MK->>UV: --port $(RECEIPT_PORT) — 実際に bind する
+    MK->>APP: RECEIPT_AGENT_PORT — カードに載る URL を組む
+    Note over UV,APP: to_a2a(port=) は bind しない。<br/>2つがズレると到達不能な URL が広告される
+    RA->>UV: GET /.well-known/agent-card.json
+    UV-->>RA: card.supportedInterfaces[].url
+    RA->>UV: A2A JSONRPC — カード記載の URL 宛
+    Note over RA,UV: smoke test はこの url と<br/>実際のポートの一致を検査する
+```
+
+Makefile が `RECEIPT_AGENT_PORT` を `RECEIPT_PORT` から渡して両者を同期させ、
+smoke test の `card url matches served port` がズレを検出します。
+
 ### もう一つの公開方法（adk api_server --a2a）
 
 ```bash
@@ -44,7 +96,57 @@ make run agent-json   # 自動生成カードを吸い出して agent.json を�
 make api-server       # agents/ 配下を一括公開（カードURLは /a2a/<name>/... 形式）
 ```
 
+```mermaid
+flowchart LR
+    subgraph m1["方式1: to_a2a — 既定"]
+        direction TB
+        A1["make run"] --> B1["uvicorn ...agent:a2a_app<br/>エージェントごとに1プロセス"]
+        B1 --> C1["カード URL<br/>http://localhost:18001"]
+    end
+    subgraph m2["方式2: adk api_server --a2a"]
+        direction TB
+        A2["make run"] --> B2["make agent-json<br/>稼働中のカードを吸い出す"]
+        B2 --> C2["agents/*/agent.json<br/>生成物 / gitignore 済み / 手書きしない"]
+        C2 --> D2["make api-server<br/>agents/ 配下を一括公開"]
+        D2 --> E2["カード URL<br/>/a2a/receipt_agent"]
+    end
+```
+
 ## GCP に載せる（要: 組織付きプロジェクト）
+
+```mermaid
+flowchart TB
+    subgraph org["Google Cloud — 組織必須 (ORG_ID)"]
+        subgraph runtime["Agent Runtime / Agent Engine"]
+            O["expense-orchestrator<br/>identity_type=AGENT_IDENTITY"]
+            R["receipt-agent"]
+            P["policy-agent"]
+        end
+        ID["Agent Identity = SPIFFE ID<br/>principal://agents.global.org-ORG_ID.system.id.goog<br/>/resources/aiplatform/.../reasoningEngines/ENGINE_ID<br/>長期鍵は存在しない"]
+        subgraph iam["IAM — principal:// に直接付与 (SA ではない)"]
+            I1["roles/aiplatform.expressUser<br/>推論・セッション・メモリ"]
+            I2["roles/storage.objectViewer<br/>個体ごとに最小化"]
+            I3["roles/iap.egressor<br/>ゲートウェイ通行許可"]
+        end
+        REG["Agent Registry<br/>agents/receipt-agent<br/>agents/policy-agent<br/>カード上限 10KB"]
+        subgraph gw["Agent Gateway  expense-gw — egress"]
+            AZ["IAP authz extension + policy<br/>まず DRY_RUN"]
+            MA["Model Armor  ma-egress<br/>PI/jailbreak + malicious URI<br/>まず INSPECT_ONLY"]
+            AZ --> MA
+        end
+    end
+    EXT["外部 API / MCP サーバ<br/>Registry 未登録の MCP は既定でブロック"]
+
+    O --> R
+    O --> P
+    runtime -.->|"デプロイ時に発行"| ID
+    ID --> iam
+    O -->|"agent_gateway_config で<br/>egress を固定"| gw
+    MA --> EXT
+    O -.->|"USE_AGENT_REGISTRY=1<br/>URL ではなく名前で解決"| REG
+    REG -.-> R
+    REG -.-> P
+```
 
 ```bash
 cp .env.example .env  # GCP 変数を埋めて `set -a; source .env`
