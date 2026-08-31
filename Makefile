@@ -4,21 +4,29 @@
 
 SHELL := /bin/bash
 PY ?= python3
+ADK ?= adk
 PIP ?= pip
 RECEIPT_PORT ?= 8001
 POLICY_PORT  ?= 8002
+VENV   := .venv
 PIDDIR := .pids
 LOGDIR := .logs
 
-.PHONY: help install run stop smoke chat card agent-json api-server \
+.PHONY: help venv install run stop smoke chat card agent-json api-server \
         gcp-apis gcp-deploy gcp-iam gcp-registry gcp-gateway gcp-model-armor \
         gh-create push clean
 
 help: ## このヘルプ
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}'
 
+venv: ## .venv を作成（初回のみ / 有効化してから make install）
+	$(PY) -m venv $(VENV)
+	@echo "  有効化: source $(VENV)/bin/activate"
+	@echo "  その後: make install"
+
 install: ## 依存をインストール（google-adk[a2a,agent-identity]）
-	$(PIP) install "google-adk[a2a]" "google-adk[agent-identity]"
+	$(PIP) install --upgrade "google-adk[a2a,agent-identity]>=2.8"
+	@$(PY) -c "import google.adk; print('installed google-adk', google.adk.__version__)"
 
 run: stop ## receipt(8001) と policy(8002) をバックグラウンド起動
 	@mkdir -p $(PIDDIR) $(LOGDIR)
@@ -47,7 +55,7 @@ card: ## 両エージェントのカードを表示
 	@curl -s localhost:$(POLICY_PORT)/.well-known/agent-card.json | $(PY) -m json.tool
 
 chat: ## adk web でオーケストレータと対話（要 GOOGLE_API_KEY）
-	adk web .
+	$(ADK) web .
 
 agent-json: ## api_server 方式用の agent.json を生成（run 済みであること）
 	$(PY) scripts/make_agent_json.py \
