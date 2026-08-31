@@ -8,30 +8,58 @@
 
 ```mermaid
 flowchart TB
-    subgraph caller["呼ぶ側 — サーブされない"]
-        ORCH["expense_orchestrator<br/>orchestrator/agent.py<br/>adk web . で起動"]
+    subgraph caller["呼ぶ側 — サーブされない / make chat で起動"]
+        ORCH["expense_orchestrator<br/>orchestrator/agent.py<br/>adk web --port WEB_PORT → :18000"]
         RA1["RemoteA2aAgent<br/>name=receipt_agent<br/>use_legacy=False"]
         RA2["RemoteA2aAgent<br/>name=policy_agent<br/>use_legacy=False"]
         ORCH --> RA1
         ORCH --> RA2
     end
-    subgraph served["公開側 — uvicorn でサーブ"]
-        subgraph S1["receipt-agent : 18001"]
+    subgraph served["公開側 — uvicorn でサーブ / make run で起動"]
+        subgraph S1["receipt-agent — RECEIPT_PORT → :18001"]
             APP1["a2a_app = to_a2a(root_agent, port=18001)<br/>agents/receipt_agent/agent.py"]
-            T1["tools<br/>extract_receipt / list_receipts"]
+            T1["tools: extract_receipt / list_receipts<br/>モックデータ（R-1001 等の ID 引き）<br/>画像 OCR は未実装"]
             APP1 --> T1
         end
-        subgraph S2["policy-agent : 18002"]
+        subgraph S2["policy-agent — POLICY_PORT → :18002"]
             APP2["a2a_app = to_a2a(root_agent, port=18002)<br/>agents/policy_agent/agent.py"]
-            T2["tools<br/>check_policy"]
+            T2["tools: check_policy<br/>会食 10000 / 消耗品 5000<br/>宿泊 15000 / 交通費 30000"]
             APP2 --> T2
         end
     end
+    REG["Agent Registry（GCP）<br/>USE_AGENT_REGISTRY=1 のとき<br/>URL ではなく名前で解決"]
+
     RA1 -->|"1. GET /.well-known/agent-card.json"| APP1
     RA1 -->|"2. A2A JSONRPC"| APP1
     RA2 -->|"1. GET /.well-known/agent-card.json"| APP2
     RA2 -->|"2. A2A JSONRPC"| APP2
+    ORCH -.->|"既定は URL 直指定。<br/>Registry 経由に切替可"| REG
 ```
+
+`make chat` と `make run` は**独立**しています。エージェントを起動せずに UI だけ立ち上げると、
+最初のメッセージ送信時に `All connection attempts failed` になります。先に `make run` してください。
+
+### ローカルのポート配置
+
+```mermaid
+flowchart LR
+    subgraph docker["Docker / Colima がフォワード中 — 使わない"]
+        D1[":5173  Vite フロントエンド"]
+        D2[":5432 / :5433  PostgreSQL"]
+        D3[":8000  バックエンド"]
+        D4[":8001"]
+    end
+    subgraph proj["このリポジトリ — 18000 番台に退避"]
+        W["adk web : 18000<br/>WEB_PORT"]
+        R["receipt-agent : 18001<br/>RECEIPT_PORT"]
+        P["policy-agent : 18002<br/>POLICY_PORT"]
+    end
+    D3 -.->|"adk web の既定 :8000 は<br/>ここと衝突するため退避"| W
+    D4 -.->|"旧 receipt-agent の :8001 も<br/>衝突していたため退避"| R
+```
+
+`make run` / `make chat` は起動前に `lsof` で確認し、埋まっていれば占有プロセスを
+名指しして中断します。
 
 **呼ぶ側と公開側は非対称**です。`receipt` / `policy` は `to_a2a()` 一行で ASGI アプリになり
 uvicorn がサーブしますが、オーケストレータはサーブされません（`adk web` で起動して
@@ -49,7 +77,7 @@ make smoke     # カード取得・URL整合・RemoteA2aAgent 解決（LLM不要
 make card      # エージェントカードを眺める
 
 cp .env.example .env   # GOOGLE_API_KEY を入れて
-make chat      # adk web でオーケストレータと対話（:8000）
+make chat      # adk web でオーケストレータと対話（:18000）
 make stop
 ```
 
@@ -173,6 +201,7 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 | `ERROR: port 18001 は既に他プロセスが使用中です` | 別プロセスがポートを占有（Docker/Colima のポートフォワード等）。占有プロセス名が表示される | 解放するか `make run RECEIPT_PORT=28001 POLICY_PORT=28002` |
 | `make smoke` が `HTTP 404 … 応答: '...'` | ポートに別物が応答している。表示される応答ボディで正体が分かる | 上と同じくポートを変えるか解放する |
 | `make smoke` が `Connection refused` | エージェントが起動していない | `make run` の出力とログを確認 |
+| `403 Forbidden: origin not allowed` や身に覚えのないパスへのアクセスログ | 別アプリ（Docker のフロント等）が同じポートを自分のバックエンドと誤認して叩いている | ポートを分ける。`adk web` の既定 `:8000` は Docker と衝突しやすいので `make chat` は `WEB_PORT` を渡す |
 
 `make install` は `--upgrade` 付きでバージョン下限を指定している。
 インストール後に実際に入った版を表示するので、想定と違えばそこで気づける。
@@ -186,8 +215,11 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 - Agent Identity は組織必須（trust domain に org ID が入る）。長期鍵は存在しない
 - Gateway は Registry 未登録の MCP を既定でブロック。Model Armor / IAP は
   INSPECT_ONLY / DRY_RUN から始める
-- ポートは `:18001 / :18002`。`RECEIPT_PORT` / `POLICY_PORT` で変更でき、
-  カードに載る URL（`to_a2a(port=)`）も Makefile 側で同期させている
+- ポートは `:18000`（adk web）/ `:18001` / `:18002`。`WEB_PORT` / `RECEIPT_PORT` /
+  `POLICY_PORT` で変更でき、カードに載る URL（`to_a2a(port=)`）も Makefile 側で同期させている
+- 既定値は Docker / Colima のポートフォワード（`5173` `5432` `5433` `8000` `8001` など）を
+  避けた帯にしてある。`adk web` の既定 `:8000` は特に衝突しやすい。
+  `make run` / `make chat` は起動前に占有プロセスを名指しして中断する
 - macOS に `setsid` は無いので `make run` は `nohup` で起動し、`make stop` は
   プロセスグループではなく PID を kill する
 - `PY` / `PIP` / `ADK` は `.venv` の有無で自動的に切り替わる。uvicorn も

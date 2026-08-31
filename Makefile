@@ -13,10 +13,25 @@ ADK ?= $(if $(wildcard $(VENV)/bin/adk),$(VENV)/bin/adk,adk)
 # venv 自体を作る用。壊れた .venv を作り直せるよう $(PY) とは分ける。
 BOOTSTRAP_PY ?= python3
 
+# Docker/Colima のポートフォワード（5173 / 5432 / 5433 / 8000 / 8001 など）と
+# ぶつからない帯を既定にしている。adk web の既定 8000 は衝突するので必ず渡すこと。
 RECEIPT_PORT ?= 18001
 POLICY_PORT  ?= 18002
+WEB_PORT     ?= 18000
 PIDDIR := .pids
 LOGDIR := .logs
+
+# 指定ポートが空いているか確認し、埋まっていれば占有プロセスを名指しして止まる。
+define check_ports
+@for port in $(1); do \
+  if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+    echo "ERROR: port $$port は既に他プロセスが使用中です:"; \
+    lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -n +2 | sed 's/^/  /'; \
+    echo "  -> 解放するか、別ポートを指定: make <target> RECEIPT_PORT=.. POLICY_PORT=.. WEB_PORT=.."; \
+    exit 1; \
+  fi; \
+done
+endef
 
 .PHONY: help venv install run stop smoke chat card agent-json api-server \
         gcp-apis gcp-deploy gcp-iam gcp-registry gcp-gateway gcp-model-armor \
@@ -40,14 +55,7 @@ run: stop ## receipt(18001) と policy(18002) をバックグラウンド起動
 	  echo "ERROR: $(PY) に google-adk[a2a] が入っていません"; \
 	  echo "  -> make install（.venv が無ければ make venv から）"; \
 	  exit 1; }
-	@for port in $(RECEIPT_PORT) $(POLICY_PORT); do \
-	  if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
-	    echo "ERROR: port $$port は既に他プロセスが使用中です:"; \
-	    lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -n +2 | sed 's/^/  /'; \
-	    echo "  -> 解放するか、別ポートで: make run RECEIPT_PORT=28001 POLICY_PORT=28002"; \
-	    exit 1; \
-	  fi; \
-	done
+	$(call check_ports,$(RECEIPT_PORT) $(POLICY_PORT))
 	@RECEIPT_AGENT_PORT=$(RECEIPT_PORT) nohup $(PY) -m uvicorn agents.receipt_agent.agent:a2a_app --host localhost --port $(RECEIPT_PORT) \
 	  > $(LOGDIR)/receipt.log 2>&1 & echo $$! > $(PIDDIR)/receipt.pid
 	@POLICY_AGENT_PORT=$(POLICY_PORT) nohup $(PY) -m uvicorn agents.policy_agent.agent:a2a_app --host localhost --port $(POLICY_PORT) \
@@ -85,7 +93,8 @@ card: ## 両エージェントのカードを表示
 	@curl -s localhost:$(POLICY_PORT)/.well-known/agent-card.json | $(PY) -m json.tool
 
 chat: ## adk web でオーケストレータと対話（要 GOOGLE_API_KEY）
-	$(ADK) web .
+	$(call check_ports,$(WEB_PORT))
+	$(ADK) web . --port $(WEB_PORT)
 
 agent-json: ## api_server 方式用の agent.json を生成（run 済みであること）
 	$(PY) scripts/make_agent_json.py \

@@ -12,22 +12,27 @@ Model Armor）を、経費精算チェックを題材に一通り動かすサン
 ## コマンド
 
 ```bash
-make venv && source .venv/bin/activate   # 初回のみ。以降 make は .venv を使う
+make venv             # .venv を作る（初回のみ）。activate は不要
 make install          # google-adk[a2a,agent-identity]>=2.8
 make run              # receipt(:18001) / policy(:18002) を uvicorn で起動
 make smoke            # LLM 不要の疎通テスト。ここが緑にならない限り先へ進まない
 make card             # 生成されたエージェントカードを表示
 make stop             # 停止（.pids/*.pid + pkill の二段構え）
-make chat             # adk web でオーケストレータと対話（要 GOOGLE_API_KEY）
+make chat             # adk web でオーケストレータと対話（:18000 / 要 GOOGLE_API_KEY）
 make help             # 全ターゲット
 ```
 
-venv を activate しない場合は `make run PY=.venv/bin/python` のように渡す。
-`PY` / `PIP` / `ADK` は全て上書き可能で、uvicorn は `$(PY) -m uvicorn` として
-起動するため `PY` を差し替えれば必ず同じ interpreter が使われる。
+`.venv` があれば `PY` / `PIP` / `ADK` は自動で `.venv/bin/*` を指すので activate は不要。
+別のインタプリタを使うときだけ `make run PY=/path/to/python` と渡す。uvicorn は
+`$(PY) -m uvicorn` として起動するため、インタプリタが混ざることはない。
+`make venv` だけは `BOOTSTRAP_PY`（既定 `python3`）を使う — 壊れた `.venv` を
+自分自身の python で作り直そうとして詰むのを避けるため。
 
-ポート衝突時は `make run` が占有プロセスを名指しして中断する。
-回避は `make run RECEIPT_PORT=28001 POLICY_PORT=28002`（`make smoke` にも同じ変数を渡すこと）。
+ポートは `WEB_PORT=18000`（adk web）/ `RECEIPT_PORT=18001` / `POLICY_PORT=18002`。
+既定値は Docker / Colima のフォワード（5173 / 5432 / 5433 / 8000 / 8001）を避けてある。
+`make run` と `make chat` は起動前に `lsof` で確認し、埋まっていれば占有プロセスを
+名指しして中断する（`$(call check_ports,...)`）。回避は
+`make run RECEIPT_PORT=28001 POLICY_PORT=28002`（`make smoke` にも同じ変数を渡すこと）。
 
 ### テスト
 
