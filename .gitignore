@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.pids/
+.logs/
+.adk/
+agents/*/agent.json

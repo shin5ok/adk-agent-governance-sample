@@ -1,0 +1,10 @@
+# Agent Gateway（egress: agent -> MCP / 外部）
+# 置換: PROJECT_ID / REGION。名簿（Agent Registry）と直結し、未登録の先は既定でブロック。
+name: expense-gw
+protocols:
+  - MCP
+googleManaged:
+  governedAccessPath: AGENT_TO_ANYWHERE
+registries:
+  - //agentregistry.googleapis.com/projects/PROJECT_ID/locations/REGION
+  - //agentregistry.googleapis.com/projects/PROJECT_ID/locations/global

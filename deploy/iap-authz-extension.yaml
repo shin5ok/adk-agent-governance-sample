@@ -1,0 +1,8 @@
+# 認可レイヤ（IAP）。まず DRY_RUN でログだけ取り、確認後 ENFORCED に。
+name: expense-gw-authz-ext
+service: iap.googleapis.com
+failOpen: true
+timeout: 1s
+metadata:
+  iamEnforcementMode: "DRY_RUN"
+  iapPolicyVersion: "V1"

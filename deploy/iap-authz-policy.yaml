@@ -1,0 +1,11 @@
+# ゲートウェイに認可 extension を結びつける
+name: expense-gw-authz-policy
+target:
+  resources:
+    - "projects/PROJECT_ID/locations/REGION/agentGateways/expense-gw"
+policyProfile: REQUEST_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/PROJECT_ID/locations/REGION/authzExtensions/expense-gw-authz-ext"
