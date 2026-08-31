@@ -13,8 +13,8 @@ from google.adk.agents.remote_a2a_agent import (
 )
 
 MODEL = os.environ.get("ADK_MODEL", "gemini-3.7-flash")
-RECEIPT_URL = os.environ.get("RECEIPT_AGENT_URL", "http://localhost:8001")
-POLICY_URL = os.environ.get("POLICY_AGENT_URL", "http://localhost:8002")
+RECEIPT_URL = os.environ.get("RECEIPT_AGENT_URL", "http://localhost:18001")
+POLICY_URL = os.environ.get("POLICY_AGENT_URL", "http://localhost:18002")
 
 
 def _local_agents() -> list[RemoteA2aAgent]:

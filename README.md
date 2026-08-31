@@ -6,8 +6,8 @@
 
 ```
 expense-orchestrator (呼ぶ側 / RemoteA2aAgent x2)
-   ├── receipt-agent  (公開側 :8001 / 領収書の読み取り)
-   └── policy-agent   (公開側 :8002 / 経費規程チェック)
+   ├── receipt-agent  (公開側 :18001 / 領収書の読み取り)
+   └── policy-agent   (公開側 :18002 / 経費規程チェック)
 ```
 
 検証環境: google-adk 2.8.0 / a2a-sdk 1.1.2 / Python 3.11
@@ -15,7 +15,9 @@ expense-orchestrator (呼ぶ側 / RemoteA2aAgent x2)
 ## ローカルで動かす
 
 ```bash
-make install   # google-adk[a2a,agent-identity]
+make venv                   # .venv を作る（初回のみ）
+source .venv/bin/activate   # 以降 make は .venv の python/pip を使う
+make install   # google-adk[a2a,agent-identity]>=2.8
 make run       # 2エージェントをバックグラウンド起動
 make smoke     # カード取得・URL整合・RemoteA2aAgent 解決（LLM不要）
 make card      # エージェントカードを眺める
@@ -61,6 +63,8 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 - Agent Identity は組織必須（trust domain に org ID が入る）。長期鍵は存在しない
 - Gateway は Registry 未登録の MCP を既定でブロック。Model Armor / IAP は
   INSPECT_ONLY / DRY_RUN から始める
+- ポートは `:18001 / :18002`。既に使用中なら `make run` が占有プロセスを名指しして
+  中断する（`make run RECEIPT_PORT=28001 POLICY_PORT=28002` で回避可）
 
 ## GitHub へ push
 

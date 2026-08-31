@@ -3,8 +3,8 @@
 
 使い方: python scripts/make_agent_json.py <card_url> <served_url> <out_path>
 例:     python scripts/make_agent_json.py \
-            http://localhost:8001/.well-known/agent-card.json \
-            http://localhost:8001/a2a/receipt_agent \
+            http://localhost:18001/.well-known/agent-card.json \
+            http://localhost:18001/a2a/receipt_agent \
             agents/receipt_agent/agent.json
 """
 import json

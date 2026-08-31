@@ -1,10 +1,10 @@
-"""receipt-agent: 領収書の読み取り担当（公開側 / to_a2a 方式, port 8001）"""
+"""receipt-agent: 領収書の読み取り担当（公開側 / to_a2a 方式, port 18001）"""
 import os
 
 from google.adk.agents import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 
-PORT = int(os.environ.get("RECEIPT_AGENT_PORT", "8001"))
+PORT = int(os.environ.get("RECEIPT_AGENT_PORT", "18001"))
 
 # --- 本来は OCR + BigQuery。ローカルで完結するようモックデータで代替 ---
 _EXPENSE_DB = {

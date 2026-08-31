@@ -6,8 +6,8 @@ SHELL := /bin/bash
 PY ?= python3
 ADK ?= adk
 PIP ?= pip
-RECEIPT_PORT ?= 8001
-POLICY_PORT  ?= 8002
+RECEIPT_PORT ?= 18001
+POLICY_PORT  ?= 18002
 VENV   := .venv
 PIDDIR := .pids
 LOGDIR := .logs
@@ -28,27 +28,47 @@ install: ## 依存をインストール（google-adk[a2a,agent-identity]）
 	$(PIP) install --upgrade "google-adk[a2a,agent-identity]>=2.8"
 	@$(PY) -c "import google.adk; print('installed google-adk', google.adk.__version__)"
 
-run: stop ## receipt(8001) と policy(8002) をバックグラウンド起動
+run: stop ## receipt(18001) と policy(18002) をバックグラウンド起動
 	@mkdir -p $(PIDDIR) $(LOGDIR)
-	@setsid uvicorn agents.receipt_agent.agent:a2a_app --host localhost --port $(RECEIPT_PORT) \
+	@for port in $(RECEIPT_PORT) $(POLICY_PORT); do \
+	  if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+	    echo "ERROR: port $$port は既に他プロセスが使用中です:"; \
+	    lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -n +2 | sed 's/^/  /'; \
+	    echo "  -> 解放するか、別ポートで: make run RECEIPT_PORT=28001 POLICY_PORT=28002"; \
+	    exit 1; \
+	  fi; \
+	done
+	@RECEIPT_AGENT_PORT=$(RECEIPT_PORT) nohup $(PY) -m uvicorn agents.receipt_agent.agent:a2a_app --host localhost --port $(RECEIPT_PORT) \
 	  > $(LOGDIR)/receipt.log 2>&1 & echo $$! > $(PIDDIR)/receipt.pid
-	@setsid uvicorn agents.policy_agent.agent:a2a_app --host localhost --port $(POLICY_PORT) \
+	@POLICY_AGENT_PORT=$(POLICY_PORT) nohup $(PY) -m uvicorn agents.policy_agent.agent:a2a_app --host localhost --port $(POLICY_PORT) \
 	  > $(LOGDIR)/policy.log 2>&1 & echo $$! > $(PIDDIR)/policy.pid
 	@echo "waiting for agent cards..."
 	@for i in $$(seq 1 30); do \
-	  curl -sf localhost:$(RECEIPT_PORT)/.well-known/agent-card.json >/dev/null 2>&1 && \
-	  curl -sf localhost:$(POLICY_PORT)/.well-known/agent-card.json  >/dev/null 2>&1 && break; \
-	  sleep 1; done
-	@echo "receipt-agent: http://localhost:$(RECEIPT_PORT)  policy-agent: http://localhost:$(POLICY_PORT)"
+	  if curl -sf localhost:$(RECEIPT_PORT)/.well-known/agent-card.json >/dev/null 2>&1 && \
+	     curl -sf localhost:$(POLICY_PORT)/.well-known/agent-card.json  >/dev/null 2>&1; then \
+	    echo "receipt-agent: http://localhost:$(RECEIPT_PORT)  policy-agent: http://localhost:$(POLICY_PORT)"; \
+	    exit 0; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	echo "ERROR: 30秒以内にエージェントカードが取得できませんでした。ログ:"; \
+	tail -n 20 $(LOGDIR)/receipt.log $(LOGDIR)/policy.log; \
+	exit 1
 
 stop: ## バックグラウンドのエージェントを停止
 	@for p in $(PIDDIR)/*.pid; do \
-	  [ -f "$$p" ] && kill -TERM -- -$$(cat "$$p") 2>/dev/null; rm -f "$$p"; done || true
+	  [ -f "$$p" ] || continue; \
+	  kill -TERM "$$(cat "$$p")" 2>/dev/null || true; \
+	  rm -f "$$p"; \
+	done
 	@pkill -f "uvicorn agents\." 2>/dev/null || true
 	@echo stopped
 
 smoke: ## LLM 不要の疎通テスト（カード取得・URL整合・カード解決）
-	$(PY) tests/smoke_test.py
+	@ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS=true \
+	 RECEIPT_AGENT_URL=http://localhost:$(RECEIPT_PORT) \
+	 POLICY_AGENT_URL=http://localhost:$(POLICY_PORT) \
+	 $(PY) tests/smoke_test.py
 
 card: ## 両エージェントのカードを表示
 	@curl -s localhost:$(RECEIPT_PORT)/.well-known/agent-card.json | $(PY) -m json.tool
@@ -68,7 +88,7 @@ agent-json: ## api_server 方式用の agent.json を生成（run 済みであ�
 	  agents/policy_agent/agent.json
 
 api-server: agent-json stop ## もう一つの公開方法: adk api_server --a2a で agents/ 配下を一括公開
-	adk api_server --a2a --port $(RECEIPT_PORT) agents
+	$(ADK) api_server --a2a --port $(RECEIPT_PORT) agents
 
 # ---------- GCP ----------
 gcp-apis: ## 必要な API を有効化

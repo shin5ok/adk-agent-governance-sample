@@ -1,10 +1,10 @@
-"""policy-agent: 経費規程チェック担当（公開側 / to_a2a 方式, port 8002）"""
+"""policy-agent: 経費規程チェック担当（公開側 / to_a2a 方式, port 18002）"""
 import os
 
 from google.adk.agents import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 
-PORT = int(os.environ.get("POLICY_AGENT_PORT", "8002"))
+PORT = int(os.environ.get("POLICY_AGENT_PORT", "18002"))
 
 _LIMITS = {"会食": 10000, "消耗品": 5000, "宿泊": 15000, "交通費": 30000}
 
