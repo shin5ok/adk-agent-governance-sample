@@ -3,12 +3,18 @@
 # GCP:     gcp-apis → gcp-deploy → gcp-iam → gcp-gateway → gcp-model-armor
 
 SHELL := /bin/bash
-PY ?= python3
-ADK ?= adk
-PIP ?= pip
+VENV   := .venv
+
+# .venv があればそれを使う。activate 忘れでシステムの python3 を掴む事故を防ぐ。
+# いずれも PY=... のように明示指定すれば従来どおり上書きできる。
+PY  ?= $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
+PIP ?= $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,pip)
+ADK ?= $(if $(wildcard $(VENV)/bin/adk),$(VENV)/bin/adk,adk)
+# venv 自体を作る用。壊れた .venv を作り直せるよう $(PY) とは分ける。
+BOOTSTRAP_PY ?= python3
+
 RECEIPT_PORT ?= 18001
 POLICY_PORT  ?= 18002
-VENV   := .venv
 PIDDIR := .pids
 LOGDIR := .logs
 
@@ -20,7 +26,7 @@ help: ## このヘルプ
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}'
 
 venv: ## .venv を作成（初回のみ / 有効化してから make install）
-	$(PY) -m venv $(VENV)
+	$(BOOTSTRAP_PY) -m venv $(VENV)
 	@echo "  有効化: source $(VENV)/bin/activate"
 	@echo "  その後: make install"
 
@@ -30,6 +36,10 @@ install: ## 依存をインストール（google-adk[a2a,agent-identity]）
 
 run: stop ## receipt(18001) と policy(18002) をバックグラウンド起動
 	@mkdir -p $(PIDDIR) $(LOGDIR)
+	@$(PY) -c "import google.adk.a2a" 2>/dev/null || { \
+	  echo "ERROR: $(PY) に google-adk[a2a] が入っていません"; \
+	  echo "  -> make install（.venv が無ければ make venv から）"; \
+	  exit 1; }
 	@for port in $(RECEIPT_PORT) $(POLICY_PORT); do \
 	  if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
 	    echo "ERROR: port $$port は既に他プロセスが使用中です:"; \

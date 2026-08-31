@@ -15,8 +15,7 @@ expense-orchestrator (呼ぶ側 / RemoteA2aAgent x2)
 ## ローカルで動かす
 
 ```bash
-make venv                   # .venv を作る（初回のみ）
-source .venv/bin/activate   # 以降 make は .venv の python/pip を使う
+make venv      # .venv を作る（初回のみ）
 make install   # google-adk[a2a,agent-identity]>=2.8
 make run       # 2エージェントをバックグラウンド起動
 make smoke     # カード取得・URL整合・RemoteA2aAgent 解決（LLM不要）
@@ -25,6 +24,13 @@ make card      # エージェントカードを眺める
 cp .env.example .env   # GOOGLE_API_KEY を入れて
 make chat      # adk web でオーケストレータと対話（:8000）
 make stop
+```
+
+`.venv` があれば `make` が自動でそれを使うので `activate` は不要
+（`source .venv/bin/activate` しても構わない）。別のインタプリタを使う場合のみ明示する:
+
+```bash
+make run PY=/path/to/python
 ```
 
 対話例: 「R-1001 と R-1003 の経費をチェックして」
@@ -54,6 +60,21 @@ make gcp-model-armor  # Model Armor テンプレート + SA ロール
 Registry 経由でサブエージェントを解決するには `USE_AGENT_REGISTRY=1` を
 セットしてオーケストレータを起動します（URL のハードコードが消えます）。
 
+## うまく動かないとき
+
+`make run` は起動に失敗すると黙って成功を装わず、非ゼロ終了して
+`.logs/receipt.log` / `.logs/policy.log` の末尾を表示する。まずそれを読む。
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `ERROR: ... に google-adk[a2a] が入っていません` | 選択された python に依存が未導入（`make run` が起動前に検出する） | `make install`（`.venv` が無ければ `make venv` から） |
+| `ERROR: port 18001 は既に他プロセスが使用中です` | 別プロセスがポートを占有（Docker/Colima のポートフォワード等）。占有プロセス名が表示される | 解放するか `make run RECEIPT_PORT=28001 POLICY_PORT=28002` |
+| `make smoke` が `HTTP 404 … 応答: '...'` | ポートに別物が応答している。表示される応答ボディで正体が分かる | 上と同じくポートを変えるか解放する |
+| `make smoke` が `Connection refused` | エージェントが起動していない | `make run` の出力とログを確認 |
+
+`make install` は `--upgrade` 付きでバージョン下限を指定している。
+インストール後に実際に入った版を表示するので、想定と違えばそこで気づける。
+
 ## 押さえどころ
 
 - `to_a2a(port=)` は bind しない。uvicorn の `--port` とズレると
@@ -63,8 +84,12 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 - Agent Identity は組織必須（trust domain に org ID が入る）。長期鍵は存在しない
 - Gateway は Registry 未登録の MCP を既定でブロック。Model Armor / IAP は
   INSPECT_ONLY / DRY_RUN から始める
-- ポートは `:18001 / :18002`。既に使用中なら `make run` が占有プロセスを名指しして
-  中断する（`make run RECEIPT_PORT=28001 POLICY_PORT=28002` で回避可）
+- ポートは `:18001 / :18002`。`RECEIPT_PORT` / `POLICY_PORT` で変更でき、
+  カードに載る URL（`to_a2a(port=)`）も Makefile 側で同期させている
+- macOS に `setsid` は無いので `make run` は `nohup` で起動し、`make stop` は
+  プロセスグループではなく PID を kill する
+- `PY` / `PIP` / `ADK` は `.venv` の有無で自動的に切り替わる。uvicorn も
+  `$(PY) -m uvicorn` として起動するので、インタプリタが混ざることはない
 
 ## GitHub へ push
 
