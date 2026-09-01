@@ -13,8 +13,8 @@ ADK ?= $(if $(wildcard $(VENV)/bin/adk),$(VENV)/bin/adk,adk)
 # venv 自体を作る用。壊れた .venv を作り直せるよう $(PY) とは分ける。
 BOOTSTRAP_PY ?= python3
 
-# Docker/Colima のポートフォワード（5173 / 5432 / 5433 / 8000 / 8001 など）と
-# ぶつからない帯を既定にしている。adk web の既定 8000 は衝突するので必ず渡すこと。
+# 他のアプリと衝突しにくい 18000 番台を既定にしている。
+# adk web は既定ポートのままだと衝突しやすいので WEB_PORT を必ず渡すこと。
 RECEIPT_PORT ?= 18001
 POLICY_PORT  ?= 18002
 WEB_PORT     ?= 18000

@@ -43,21 +43,16 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph docker["Docker / Colima がフォワード中 — 使わない"]
-        D1[":5173  Vite フロントエンド"]
-        D2[":5432 / :5433  PostgreSQL"]
-        D3[":8000  バックエンド"]
-        D4[":8001"]
-    end
-    subgraph proj["このリポジトリ — 18000 番台に退避"]
-        W["adk web : 18000<br/>WEB_PORT"]
-        R["receipt-agent : 18001<br/>RECEIPT_PORT"]
-        P["policy-agent : 18002<br/>POLICY_PORT"]
-    end
-    D3 -.->|"adk web の既定 :8000 は<br/>ここと衝突するため退避"| W
-    D4 -.->|"旧 receipt-agent の :8001 も<br/>衝突していたため退避"| R
+    C["make chat"] --> W["adk web : 18000<br/>WEB_PORT"]
+    RUN["make run"] --> R["receipt-agent : 18001<br/>RECEIPT_PORT"]
+    RUN --> P["policy-agent : 18002<br/>POLICY_PORT"]
+    W -->|"A2A"| R
+    W -->|"A2A"| P
 ```
 
+このリポジトリが listen するのはこの3つだけです。既定値は衝突を避けて 18000 番台に
+寄せてあり、`WEB_PORT` / `RECEIPT_PORT` / `POLICY_PORT` で変更できます
+（例: `make run RECEIPT_PORT=28001 POLICY_PORT=28002`）。
 `make run` / `make chat` は起動前に `lsof` で確認し、埋まっていれば占有プロセスを
 名指しして中断します。
 
@@ -201,7 +196,7 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 | `ERROR: port 18001 は既に他プロセスが使用中です` | 別プロセスがポートを占有（Docker/Colima のポートフォワード等）。占有プロセス名が表示される | 解放するか `make run RECEIPT_PORT=28001 POLICY_PORT=28002` |
 | `make smoke` が `HTTP 404 … 応答: '...'` | ポートに別物が応答している。表示される応答ボディで正体が分かる | 上と同じくポートを変えるか解放する |
 | `make smoke` が `Connection refused` | エージェントが起動していない | `make run` の出力とログを確認 |
-| `403 Forbidden: origin not allowed` や身に覚えのないパスへのアクセスログ | 別アプリ（Docker のフロント等）が同じポートを自分のバックエンドと誤認して叩いている | ポートを分ける。`adk web` の既定 `:8000` は Docker と衝突しやすいので `make chat` は `WEB_PORT` を渡す |
+| `403 Forbidden: origin not allowed` や身に覚えのないパスへのアクセスログ | 別アプリ（Docker のフロント等）が同じポートを自分のバックエンドと誤認して叩いている | ポートを分ける。`adk web` は既定ポートのままだと衝突しやすいので `make chat` は `WEB_PORT` を渡す |
 
 `make install` は `--upgrade` 付きでバージョン下限を指定している。
 インストール後に実際に入った版を表示するので、想定と違えばそこで気づける。
@@ -217,9 +212,8 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
   INSPECT_ONLY / DRY_RUN から始める
 - ポートは `:18000`（adk web）/ `:18001` / `:18002`。`WEB_PORT` / `RECEIPT_PORT` /
   `POLICY_PORT` で変更でき、カードに載る URL（`to_a2a(port=)`）も Makefile 側で同期させている
-- 既定値は Docker / Colima のポートフォワード（`5173` `5432` `5433` `8000` `8001` など）を
-  避けた帯にしてある。`adk web` の既定 `:8000` は特に衝突しやすい。
-  `make run` / `make chat` は起動前に占有プロセスを名指しして中断する
+- 既定値は他のアプリと衝突しにくい 18000 番台に寄せてある。`make run` / `make chat` は
+  起動前に占有プロセスを名指しして中断する
 - macOS に `setsid` は無いので `make run` は `nohup` で起動し、`make stop` は
   プロセスグループではなく PID を kill する
 - `PY` / `PIP` / `ADK` は `.venv` の有無で自動的に切り替わる。uvicorn も

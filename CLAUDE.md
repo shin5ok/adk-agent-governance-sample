@@ -29,7 +29,7 @@ make help             # 全ターゲット
 自分自身の python で作り直そうとして詰むのを避けるため。
 
 ポートは `WEB_PORT=18000`（adk web）/ `RECEIPT_PORT=18001` / `POLICY_PORT=18002`。
-既定値は Docker / Colima のフォワード（5173 / 5432 / 5433 / 8000 / 8001）を避けてある。
+既定値は他のアプリと衝突しにくい 18000 番台に寄せてある。
 `make run` と `make chat` は起動前に `lsof` で確認し、埋まっていれば占有プロセスを
 名指しして中断する（`$(call check_ports,...)`）。回避は
 `make run RECEIPT_PORT=28001 POLICY_PORT=28002`（`make smoke` にも同じ変数を渡すこと）。
