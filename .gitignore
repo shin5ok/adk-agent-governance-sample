@@ -4,5 +4,4 @@ __pycache__/
 .pids/
 .logs/
 .adk/
-agents/*/agent.json
 .venv/

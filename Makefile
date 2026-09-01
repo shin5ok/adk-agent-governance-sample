@@ -1,25 +1,24 @@
 # ADK A2A + Agent Identity / Registry / Gateway / Model Armor sample
 # ローカル: install → run → smoke → chat
 # GCP:     gcp-apis → gcp-deploy → gcp-iam → gcp-gateway → gcp-model-armor
+#
+# 3つの agents-cli プロジェクト（1プロジェクト = 1エージェント）を束ねる薄いラッパ。
+# 各プロジェクト内では agents-cli / uv をそのまま使える。
 
 SHELL := /bin/bash
-VENV   := .venv
 
-# .venv があればそれを使う。activate 忘れでシステムの python3 を掴む事故を防ぐ。
-# いずれも PY=... のように明示指定すれば従来どおり上書きできる。
-PY  ?= $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
-PIP ?= $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,pip)
-ADK ?= $(if $(wildcard $(VENV)/bin/adk),$(VENV)/bin/adk,adk)
-# venv 自体を作る用。壊れた .venv を作り直せるよう $(PY) とは分ける。
-BOOTSTRAP_PY ?= python3
+SERVED       := receipt-agent policy-agent
+PROJECTS     := $(SERVED) expense-orchestrator
 
 # 他のアプリと衝突しにくい 18000 番台を既定にしている。
-# adk web は既定ポートのままだと衝突しやすいので WEB_PORT を必ず渡すこと。
 RECEIPT_PORT ?= 18001
 POLICY_PORT  ?= 18002
 WEB_PORT     ?= 18000
 PIDDIR := .pids
 LOGDIR := .logs
+
+# 実験機能の警告を落とす。RemoteA2aAgent が毎回出す。
+export ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS = true
 
 # 指定ポートが空いているか確認し、埋まっていれば占有プロセスを名指しして止まる。
 define check_ports
@@ -33,89 +32,85 @@ define check_ports
 done
 endef
 
-.PHONY: help venv install run stop smoke chat card agent-json api-server \
+# 公開側を1つ起動する。$(1)=プロジェクト名 $(2)=ポート
+# APP_URL は「カードに広告する URL」。uvicorn の --port とズレると到達不能な URL が載る。
+define serve_agent
+@APP_URL=http://localhost:$(2) nohup uv run --directory $(1) \
+  uvicorn app.fast_api_app:app --host localhost --port $(2) \
+  > $(LOGDIR)/$(1).log 2>&1 & echo $$! > $(PIDDIR)/$(1).pid
+endef
+
+.PHONY: help install run stop smoke card chat lint test \
         gcp-apis gcp-deploy gcp-iam gcp-registry gcp-gateway gcp-model-armor \
         gh-create push clean
 
 help: ## このヘルプ
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}'
 
-venv: ## .venv を作成（初回のみ / 有効化してから make install）
-	$(BOOTSTRAP_PY) -m venv $(VENV)
-	@echo "  有効化: source $(VENV)/bin/activate"
-	@echo "  その後: make install"
+install: ## 3プロジェクトの依存をインストール（agents-cli install = uv sync）
+	@for p in $(PROJECTS); do echo "--- $$p"; (cd $$p && agents-cli install) || exit 1; done
 
-install: ## 依存をインストール（google-adk[a2a,agent-identity]）
-	$(PIP) install --upgrade "google-adk[a2a,agent-identity]>=2.8"
-	@$(PY) -c "import google.adk; print('installed google-adk', google.adk.__version__)"
-
-run: stop ## receipt(18001) と policy(18002) をバックグラウンド起動
+run: stop ## 公開側2体を uvicorn で起動（receipt/policy）
 	@mkdir -p $(PIDDIR) $(LOGDIR)
-	@$(PY) -c "import google.adk.a2a" 2>/dev/null || { \
-	  echo "ERROR: $(PY) に google-adk[a2a] が入っていません"; \
-	  echo "  -> make install（.venv が無ければ make venv から）"; \
-	  exit 1; }
 	$(call check_ports,$(RECEIPT_PORT) $(POLICY_PORT))
-	@RECEIPT_AGENT_PORT=$(RECEIPT_PORT) nohup $(PY) -m uvicorn agents.receipt_agent.agent:a2a_app --host localhost --port $(RECEIPT_PORT) \
-	  > $(LOGDIR)/receipt.log 2>&1 & echo $$! > $(PIDDIR)/receipt.pid
-	@POLICY_AGENT_PORT=$(POLICY_PORT) nohup $(PY) -m uvicorn agents.policy_agent.agent:a2a_app --host localhost --port $(POLICY_PORT) \
-	  > $(LOGDIR)/policy.log 2>&1 & echo $$! > $(PIDDIR)/policy.pid
+	$(call serve_agent,receipt-agent,$(RECEIPT_PORT))
+	$(call serve_agent,policy-agent,$(POLICY_PORT))
 	@echo "waiting for agent cards..."
-	@for i in $$(seq 1 30); do \
-	  if curl -sf localhost:$(RECEIPT_PORT)/.well-known/agent-card.json >/dev/null 2>&1 && \
-	     curl -sf localhost:$(POLICY_PORT)/.well-known/agent-card.json  >/dev/null 2>&1; then \
+	@for i in $$(seq 1 60); do \
+	  if curl -sf localhost:$(RECEIPT_PORT)/a2a/app/.well-known/agent-card.json >/dev/null 2>&1 && \
+	     curl -sf localhost:$(POLICY_PORT)/a2a/app/.well-known/agent-card.json  >/dev/null 2>&1; then \
 	    echo "receipt-agent: http://localhost:$(RECEIPT_PORT)  policy-agent: http://localhost:$(POLICY_PORT)"; \
 	    exit 0; \
 	  fi; \
 	  sleep 1; \
 	done; \
-	echo "ERROR: 30秒以内にエージェントカードが取得できませんでした。ログ:"; \
-	tail -n 20 $(LOGDIR)/receipt.log $(LOGDIR)/policy.log; \
+	echo "ERROR: 60秒以内にエージェントカードが取得できませんでした。ログ:"; \
+	tail -n 20 $(LOGDIR)/*.log; \
 	exit 1
 
-stop: ## バックグラウンドのエージェントを停止
+stop: ## 公開側を停止
 	@for p in $(PIDDIR)/*.pid; do \
 	  [ -f "$$p" ] || continue; \
 	  kill -TERM "$$(cat "$$p")" 2>/dev/null || true; \
 	  rm -f "$$p"; \
 	done
-	@pkill -f "uvicorn agents\." 2>/dev/null || true
+	@# パターンを [a]pp と書くのは、pkill 自身のコマンドラインに
+	@# マッチして make ごと殺してしまうのを避けるため。
+	@pkill -f "[a]pp\.fast_api_app" 2>/dev/null || true
 	@echo stopped
 
-smoke: ## LLM 不要の疎通テスト（カード取得・URL整合・カード解決）
-	@ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS=true \
-	 RECEIPT_AGENT_URL=http://localhost:$(RECEIPT_PORT) \
-	 POLICY_AGENT_URL=http://localhost:$(POLICY_PORT) \
-	 $(PY) tests/smoke_test.py
+smoke: ## 公開側2体に A2A で1往復させる（agents-cli run --mode a2a）
+	@cd receipt-agent && agents-cli run "R-1003 の領収書の内容を教えて" \
+	  --url http://localhost:$(RECEIPT_PORT) --mode a2a
+	@cd policy-agent && agents-cli run "宿泊で 45000 円は規程に適合しますか" \
+	  --url http://localhost:$(POLICY_PORT) --mode a2a
 
 card: ## 両エージェントのカードを表示
-	@curl -s localhost:$(RECEIPT_PORT)/.well-known/agent-card.json | $(PY) -m json.tool
-	@curl -s localhost:$(POLICY_PORT)/.well-known/agent-card.json | $(PY) -m json.tool
+	@curl -s localhost:$(RECEIPT_PORT)/a2a/app/.well-known/agent-card.json | python3 -m json.tool
+	@curl -s localhost:$(POLICY_PORT)/a2a/app/.well-known/agent-card.json | python3 -m json.tool
 
-chat: ## adk web でオーケストレータと対話（要 GOOGLE_API_KEY）
+chat: ## オーケストレータと対話（agents-cli playground = adk web）
 	$(call check_ports,$(WEB_PORT))
-	$(ADK) web . --port $(WEB_PORT)
+	@cd expense-orchestrator && agents-cli playground --port $(WEB_PORT)
 
-agent-json: ## api_server 方式用の agent.json を生成（run 済みであること）
-	$(PY) scripts/make_agent_json.py \
-	  http://localhost:$(RECEIPT_PORT)/.well-known/agent-card.json \
-	  http://localhost:$(RECEIPT_PORT)/a2a/receipt_agent \
-	  agents/receipt_agent/agent.json
-	$(PY) scripts/make_agent_json.py \
-	  http://localhost:$(POLICY_PORT)/.well-known/agent-card.json \
-	  http://localhost:$(POLICY_PORT)/a2a/policy_agent \
-	  agents/policy_agent/agent.json
+lint: ## 3プロジェクトの静的チェック
+	@for p in $(PROJECTS); do echo "--- $$p"; (cd $$p && agents-cli lint) || exit 1; done
 
-api-server: agent-json stop ## もう一つの公開方法: adk api_server --a2a で agents/ 配下を一括公開
-	$(ADK) api_server --a2a --port $(RECEIPT_PORT) agents
+test: ## 3プロジェクトの unit / integration テスト
+	@# integration テストは実際にモデルを呼ぶ。pytest は .env を読まないので
+	@# ここで流し込む（uvicorn 経由なら fast_api_app.py の load_dotenv が効く）。
+	@for p in $(PROJECTS); do echo "--- $$p"; \
+	  ( cd $$p; set -a; [ -f .env ] && . ./.env; set +a; \
+	    uv run pytest tests/unit tests/integration ) || exit 1; done
 
 # ---------- GCP ----------
 gcp-apis: ## 必要な API を有効化
 	./scripts/gcp_enable_apis.sh
 
 gcp-deploy: ## Agent Runtime に Agent Identity 付きで3体デプロイ
-	$(PIP) install "google-cloud-aiplatform[adk,agent_engines]"
-	$(PY) scripts/gcp_deploy_agents.py
+	@for p in $(SERVED); do echo "--- $$p"; (cd $$p && agents-cli deploy --agent-identity) || exit 1; done
+	@cd expense-orchestrator && agents-cli deploy --agent-identity \
+	  $${AGENT_GATEWAY:+--agent-gateway-egress $$AGENT_GATEWAY}
 
 gcp-iam: ## Agent Identity（principal://）へ IAM 付与（AGENT_ENGINE_ID= を指定）
 	./scripts/gcp_grant_iam.sh
@@ -138,4 +133,4 @@ push: ## origin へ push（リモート設定済みの場合）
 	git push -u origin main
 
 clean: stop ## 生成物を削除
-	rm -rf $(PIDDIR) $(LOGDIR) .adk __pycache__ */__pycache__ */*/__pycache__
+	rm -rf $(PIDDIR) $(LOGDIR)
