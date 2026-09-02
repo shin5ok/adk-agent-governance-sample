@@ -2,17 +2,24 @@
 # ローカル: install → run → smoke → chat
 # GCP:     gcp-apis → gcp-deploy → gcp-iam → gcp-gateway → gcp-model-armor
 #
-# 3つの agents-cli プロジェクト（1プロジェクト = 1エージェント）を束ねる薄いラッパ。
+# 4つの agents-cli プロジェクト（1プロジェクト = 1エージェント）を束ねる薄いラッパ。
 # 各プロジェクト内では agents-cli / uv をそのまま使える。
 
 SHELL := /bin/bash
 
-SERVED       := receipt-agent policy-agent
-PROJECTS     := $(SERVED) expense-orchestrator
+# デプロイ先ランタイムで分けている。ローカルではどちらも同じ uvicorn なので、
+# 差が出るのは gcp-deploy 以降だけ。
+# RUNTIME_SERVED  = Agent Runtime にデプロイする公開側
+# CLOUDRUN_SERVED = Cloud Run にデプロイする公開側（別ランタイム）
+RUNTIME_SERVED  := receipt-agent policy-agent
+CLOUDRUN_SERVED := fx-agent
+SERVED          := $(RUNTIME_SERVED) $(CLOUDRUN_SERVED)
+PROJECTS        := $(SERVED) expense-orchestrator
 
 # 他のアプリと衝突しにくい 18000 番台を既定にしている。
 RECEIPT_PORT ?= 18001
 POLICY_PORT  ?= 18002
+FX_PORT      ?= 18003
 WEB_PORT     ?= 18000
 PIDDIR := .pids
 LOGDIR := .logs
@@ -26,7 +33,7 @@ define check_ports
   if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
     echo "ERROR: port $$port は既に他プロセスが使用中です:"; \
     lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -n +2 | sed 's/^/  /'; \
-    echo "  -> 解放するか、別ポートを指定: make <target> RECEIPT_PORT=.. POLICY_PORT=.. WEB_PORT=.."; \
+    echo "  -> 解放するか、別ポートを指定: make <target> RECEIPT_PORT=.. POLICY_PORT=.. FX_PORT=.. WEB_PORT=.."; \
     exit 1; \
   fi; \
 done
@@ -47,19 +54,21 @@ endef
 help: ## このヘルプ
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-16s\033[0m %s\n", $$1, $$2}'
 
-install: ## 3プロジェクトの依存をインストール（agents-cli install = uv sync）
+install: ## 4プロジェクトの依存をインストール（agents-cli install = uv sync）
 	@for p in $(PROJECTS); do echo "--- $$p"; (cd $$p && agents-cli install) || exit 1; done
 
-run: stop ## 公開側2体を uvicorn で起動（receipt/policy）
+run: stop ## 公開側3体を uvicorn で起動（receipt/policy/fx）
 	@mkdir -p $(PIDDIR) $(LOGDIR)
-	$(call check_ports,$(RECEIPT_PORT) $(POLICY_PORT))
+	$(call check_ports,$(RECEIPT_PORT) $(POLICY_PORT) $(FX_PORT))
 	$(call serve_agent,receipt-agent,$(RECEIPT_PORT))
 	$(call serve_agent,policy-agent,$(POLICY_PORT))
+	$(call serve_agent,fx-agent,$(FX_PORT))
 	@echo "waiting for agent cards..."
 	@for i in $$(seq 1 60); do \
 	  if curl -sf localhost:$(RECEIPT_PORT)/a2a/app/.well-known/agent-card.json >/dev/null 2>&1 && \
-	     curl -sf localhost:$(POLICY_PORT)/a2a/app/.well-known/agent-card.json  >/dev/null 2>&1; then \
-	    echo "receipt-agent: http://localhost:$(RECEIPT_PORT)  policy-agent: http://localhost:$(POLICY_PORT)"; \
+	     curl -sf localhost:$(POLICY_PORT)/a2a/app/.well-known/agent-card.json  >/dev/null 2>&1 && \
+	     curl -sf localhost:$(FX_PORT)/a2a/app/.well-known/agent-card.json      >/dev/null 2>&1; then \
+	    echo "receipt-agent: http://localhost:$(RECEIPT_PORT)  policy-agent: http://localhost:$(POLICY_PORT)  fx-agent: http://localhost:$(FX_PORT)"; \
 	    exit 0; \
 	  fi; \
 	  sleep 1; \
@@ -79,24 +88,27 @@ stop: ## 公開側を停止
 	@pkill -f "[a]pp\.fast_api_app" 2>/dev/null || true
 	@echo stopped
 
-smoke: ## 公開側2体に A2A で1往復させる（agents-cli run --mode a2a）
-	@cd receipt-agent && agents-cli run "R-1003 の領収書の内容を教えて" \
+smoke: ## 公開側3体に A2A で1往復させる（agents-cli run --mode a2a）
+	@cd receipt-agent && agents-cli run "R-1004 の領収書の内容を教えて" \
 	  --url http://localhost:$(RECEIPT_PORT) --mode a2a
-	@cd policy-agent && agents-cli run "宿泊で 45000 円は規程に適合しますか" \
+	@cd fx-agent && agents-cli run "320 USD は何円ですか" \
+	  --url http://localhost:$(FX_PORT) --mode a2a
+	@cd policy-agent && agents-cli run "宿泊で 48736 円は規程に適合しますか" \
 	  --url http://localhost:$(POLICY_PORT) --mode a2a
 
-card: ## 両エージェントのカードを表示
+card: ## 公開側3体のカードを表示
 	@curl -s localhost:$(RECEIPT_PORT)/a2a/app/.well-known/agent-card.json | python3 -m json.tool
 	@curl -s localhost:$(POLICY_PORT)/a2a/app/.well-known/agent-card.json | python3 -m json.tool
+	@curl -s localhost:$(FX_PORT)/a2a/app/.well-known/agent-card.json | python3 -m json.tool
 
 chat: ## オーケストレータと対話（agents-cli playground = adk web）
 	$(call check_ports,$(WEB_PORT))
 	@cd expense-orchestrator && agents-cli playground --port $(WEB_PORT)
 
-lint: ## 3プロジェクトの静的チェック
+lint: ## 4プロジェクトの静的チェック
 	@for p in $(PROJECTS); do echo "--- $$p"; (cd $$p && agents-cli lint) || exit 1; done
 
-test: ## 3プロジェクトの unit / integration テスト
+test: ## 4プロジェクトの unit / integration テスト
 	@# integration テストは実際にモデルを呼ぶ。pytest は .env を読まないので
 	@# ここで流し込む（uvicorn 経由なら fast_api_app.py の load_dotenv が効く）。
 	@for p in $(PROJECTS); do echo "--- $$p"; \
@@ -107,15 +119,21 @@ test: ## 3プロジェクトの unit / integration テスト
 gcp-apis: ## 必要な API を有効化
 	./scripts/gcp_enable_apis.sh
 
-gcp-deploy: ## Agent Runtime に Agent Identity 付きで3体デプロイ
-	@for p in $(SERVED); do echo "--- $$p"; (cd $$p && agents-cli deploy --agent-identity) || exit 1; done
+gcp-deploy: ## Agent Runtime に3体 + Cloud Run に fx-agent をデプロイ
+	@for p in $(RUNTIME_SERVED); do echo "--- $$p (Agent Runtime)"; \
+	  (cd $$p && agents-cli deploy --agent-identity) || exit 1; done
 	@cd expense-orchestrator && agents-cli deploy --agent-identity \
 	  $${AGENT_GATEWAY:+--agent-gateway-egress $$AGENT_GATEWAY}
+	@# fx-agent は manifest の deployment_target が cloud_run なので、同じ
+	@# agents-cli deploy が gcloud run deploy に落ちる。--agent-identity は
+	@# Agent Runtime 専用なので付けない（Cloud Run では SA で動く）。
+	@for p in $(CLOUDRUN_SERVED); do echo "--- $$p (Cloud Run)"; \
+	  (cd $$p && agents-cli deploy) || exit 1; done
 
 gcp-iam: ## Agent Identity（principal://）へ IAM 付与（AGENT_ENGINE_ID= を指定）
 	./scripts/gcp_grant_iam.sh
 
-gcp-registry: ## Runtime 外エージェントを Agent Registry に手動登録（AGENT_BASE_URL= を指定）
+gcp-registry: ## Cloud Run の fx-agent を Agent Registry に手動登録（AGENT_BASE_URL= を指定）
 	./scripts/gcp_register_registry.sh
 
 gcp-gateway: ## Agent Gateway（egress）+ IAP 認可（DRY_RUN）を作成

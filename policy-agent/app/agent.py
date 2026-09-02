@@ -35,7 +35,7 @@ def check_policy(amount: int, category: str) -> dict:
     """金額とカテゴリを経費規程と照合する。
 
     Args:
-        amount: 金額（円）
+        amount: 金額（円）。外貨の領収書は円換算した後の金額を渡す
         category: 会食 / 消耗品 / 宿泊 / 交通費 のいずれか
     """
     limit = _LIMITS.get(category)
@@ -57,7 +57,11 @@ root_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     description="経費規程との照合を担当する",
-    instruction="金額とカテゴリを受け取ったら check_policy で判定し、結果だけ返す。",
+    instruction=(
+        "金額とカテゴリを受け取ったら check_policy で判定し、結果だけ返す。"
+        "規程は円建てなので、円以外の金額を渡されたら判定せず、"
+        "円換算した金額を渡すよう返す。"
+    ),
     tools=[check_policy],
 )
 

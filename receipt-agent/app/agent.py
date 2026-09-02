@@ -29,30 +29,49 @@ from google.genai import types
 MODEL = os.environ.get("ADK_MODEL", "gemini-3.7-flash")
 
 # --- 本来は OCR + BigQuery。ローカルで完結するようモックデータで代替 ---
+# R-1004 / R-1005 は海外出張の領収書。金額が外貨建てなので、
+# 規程判定の前に fx-agent で円換算する必要がある。
 _EXPENSE_DB = {
     "R-1001": {
         "amount": 12800,
+        "currency": "JPY",
         "date": "2026-08-20",
         "store": "居酒屋やまだ",
         "category": "会食",
     },
     "R-1002": {
         "amount": 980,
+        "currency": "JPY",
         "date": "2026-08-21",
         "store": "セブンイレブン",
         "category": "消耗品",
     },
     "R-1003": {
         "amount": 45000,
+        "currency": "JPY",
         "date": "2026-08-22",
         "store": "ホテルグランデ",
         "category": "宿泊",
+    },
+    "R-1004": {
+        "amount": 320.00,
+        "currency": "USD",
+        "date": "2026-08-22",
+        "store": "Hotel Bayview",
+        "category": "宿泊",
+    },
+    "R-1005": {
+        "amount": 38.60,
+        "currency": "EUR",
+        "date": "2026-08-23",
+        "store": "Cafe Roma",
+        "category": "会食",
     },
 }
 
 
 def extract_receipt(receipt_id: str) -> dict:
-    """領収書IDから金額・日付・店舗・カテゴリを取り出す。
+    """領収書IDから金額・通貨・日付・店舗・カテゴリを取り出す。
 
     Args:
         receipt_id: R-XXXX 形式の領収書ID
@@ -77,7 +96,7 @@ root_agent = Agent(
     description="領収書の読み取りと経費データとの突き合わせを担当する",
     instruction=(
         "領収書に関する依頼を受けたら extract_receipt / list_receipts を使って"
-        "事実だけを返す。判定はしない。"
+        "事実だけを返す。判定はしない。金額を返すときは通貨コードを必ず添える。"
     ),
     tools=[extract_receipt, list_receipts],
 )
