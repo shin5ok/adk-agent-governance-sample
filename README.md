@@ -2,14 +2,14 @@
 
 経費精算チェックを題材に、Google ADK の A2A と GCP のエージェント統制
 （**Agent Identity / SPIFFE ID・Agent Registry・Agent Gateway・Model Armor**）を
-一通り動かすサンプルです。
+一通り動かすサンプル。
 
-ツールチェーンは **[agents-cli](https://github.com/google/agents-cli) + uv** に統一しています。
-`python -m venv` や `pip install` は使いません。
+ツールチェーンは **[agents-cli](https://github.com/google/agents-cli) + uv** に統一している。
+`python -m venv` や `pip install` は使わない。
 
 ## 構成
 
-**1プロジェクト = 1エージェント**の agents-cli プロジェクトが3つ並んでいます。
+**1プロジェクト = 1エージェント**の agents-cli プロジェクトが3つ並んでいる。
 
 ```mermaid
 flowchart TB
@@ -41,13 +41,13 @@ flowchart TB
     ORCH -.->|"既定は URL 直指定。<br/>Registry 経由に切替可"| REG
 ```
 
-`make chat` と `make run` は**独立**しています。エージェントを起動せずに UI だけ立ち上げると、
-最初のメッセージ送信時に接続エラーになります。先に `make run` してください。
+`make chat` と `make run` は**独立**している。エージェントを起動せずに UI だけ立ち上げると、
+最初のメッセージ送信時に接続エラーになる。先に `make run` しておく。
 
-**呼ぶ側と公開側は非対称**です。`receipt` / `policy` は scaffold が生成した
-`app/fast_api_app.py` を uvicorn がサーブしますが、オーケストレータはサーブされません
+**呼ぶ側と公開側は非対称**。`receipt` / `policy` は scaffold が生成した
+`app/fast_api_app.py` を uvicorn がサーブするが、オーケストレータはサーブされない
 （`agents-cli playground` で起動して `RemoteA2aAgent` として2体を呼ぶだけ）。
-この非対称性がこのリポジトリの構成の要です。
+この非対称性がこのリポジトリの構成の要になる。
 
 ### ディレクトリ
 
@@ -75,11 +75,11 @@ flowchart LR
     W -->|"A2A"| P
 ```
 
-このリポジトリが listen するのはこの3つだけです。既定値は衝突を避けて 18000 番台に
-寄せてあり、`WEB_PORT` / `RECEIPT_PORT` / `POLICY_PORT` で変更できます
+このリポジトリが listen するのはこの3つだけ。既定値は衝突を避けて 18000 番台に
+寄せてあり、`WEB_PORT` / `RECEIPT_PORT` / `POLICY_PORT` で変更できる
 （例: `make run RECEIPT_PORT=28001 POLICY_PORT=28002`）。
 `make run` / `make chat` は起動前に `lsof` で確認し、埋まっていれば占有プロセスを
-名指しして中断します。
+表示して中断する。
 
 検証環境: agents-cli 1.4.2 / google-adk 2.x / a2a-sdk 1.x / Python 3.11 / uv
 
@@ -89,14 +89,14 @@ flowchart LR
 uv tool install google-agents-cli   # 初回のみ
 make install   # 3プロジェクトに agents-cli install（= uv sync）
 make run       # 公開側2体を uvicorn で起動
-make card      # エージェントカードを眺める
+make card      # エージェントカードを確認する
 make smoke     # A2A で1往復（LLM を呼ぶ）
 make chat      # agents-cli playground でオーケストレータと対話（:18000）
 make stop
 ```
 
 個別のエージェントだけ触るときは、そのプロジェクトに `cd` すれば
-agents-cli がそのまま使えます:
+agents-cli がそのまま使える:
 
 ```bash
 cd receipt-agent
@@ -107,13 +107,67 @@ agents-cli lint
 
 対話例: 「R-1001 と R-1003 の経費をチェックして」
 → receipt_agent が内容を取り、policy_agent が規程判定し、
-   R-1003（宿泊 45,000 円 > 上限 15,000 円）だけ違反として報告されます。
+   R-1003（宿泊 45,000 円 > 上限 15,000 円）だけ違反として報告される。
+
+### エージェントを開発する（プロンプト例）
+
+各プロジェクトには scaffold が生成した `CLAUDE.md`（コーディングエージェント向けの
+開発ガイド）が入っている。開発は**プロジェクトに `cd` してコーディングエージェントを
+起動し、日本語で指示する**のが基本の流れ。`uvx google-agents-cli setup` を一度
+実行しておくと、ADK のスキル一式がコーディングエージェント側に入る。
+
+```bash
+cd receipt-agent
+claude        # または好みのコーディングエージェント。CLAUDE.md が文脈になる
+```
+
+プロンプトでは「触るファイル」ではなく**役割の境界**を伝えると崩れない。
+このリポジトリの境界は receipt = 事実だけ / policy = 判定だけ /
+orchestrator = 委譲と集約だけ。
+
+**receipt-agent** — 事実を取る係。判定を持ち込ませない:
+
+```text
+モックデータに R-1004（タクシー 3,200円 / 2026-08-23 / 日本交通 / 交通費）を
+追加して。追加後、agents-cli run で R-1004 が引けることを確認して。
+```
+
+```text
+extract_receipt はモックデータを引いている。環境変数 RECEIPTS_BUCKET の
+GCS バケットから領収書画像を取得して Gemini で OCR する read_receipt_image
+ツールを追加して。「事実だけを返し、判定はしない」という役割は変えないこと。
+```
+
+**policy-agent** — 判定する係。判定ロジックは関数に閉じたまま:
+
+```text
+経費規程に「備品: 上限 20,000円」を追加して。あわせて、上限の9割を超えたら
+verdict=WARN を返すようにして。判定は check_policy の中に閉じたままにして、
+LLM に判定させないこと。
+```
+
+**expense-orchestrator** — 委譲と集約だけ。自分で事実も判定も持たない:
+
+```text
+違反が1件でもあったら、報告の最後に経理部向けの差し戻しコメントを1段落
+付けるよう instruction を調整して。receipt_agent / policy_agent への
+委譲のさせ方は変えないこと。
+```
+
+指示のコツ:
+
+- **生成物を触らせない。** 「A2A の接続コードを書いて」「fast_api_app.py を直して」
+  とは頼まない。A2A は scaffold 由来で、編集対象は `app/agent.py` と `.env` だけ
+- 変更のたびに `agents-cli run "R-1001 は?"` で単体を、`make run` + `make smoke` で
+  連携を確認させる
+- 振る舞いの検証を頼むときは pytest ではなく `agents-cli eval run`
+  （LLM の出力は非決定的なので、応答内容を assert する pytest は書かせない）
 
 ### カード解決と APP_URL
 
-エージェントの呼び出しは **カードを取る → カードに書かれた URL へ投げる** の2段構えです。
+エージェントの呼び出しは **カードを取る → カードに書かれた URL へ送る** の2段構え。
 `APP_URL` は bind せず「カードに載せる URL」を組み立てるだけなので、
-uvicorn の `--port` とズレると到達不能な URL が広告されます。
+uvicorn の `--port` と食い違うと到達不能な URL が広告される。
 
 ```mermaid
 sequenceDiagram
@@ -130,7 +184,7 @@ sequenceDiagram
     RA->>UV: A2A JSONRPC — カード記載の URL 宛
 ```
 
-Makefile の `serve_agent` マクロが `APP_URL` と `--port` を同時に渡して同期させています。
+Makefile の `serve_agent` マクロが `APP_URL` と `--port` を同時に渡して同期させている。
 
 ## GCP に載せる（要: 組織付きプロジェクト）
 
@@ -180,21 +234,21 @@ make gcp-model-armor  # Model Armor テンプレート + SA ロール
 ```
 
 `AGENT_GATEWAY` を `.env` に設定しておくと、`make gcp-deploy` が
-オーケストレータにだけ `--agent-gateway-egress` を付けて egress を固定します。
+オーケストレータにだけ `--agent-gateway-egress` を付けて egress を固定する。
 このフラグは scaffold 時の `--agent-gateway`（Dockerfile にゲートウェイのルート CA を
-信頼させる）が前提で、expense-orchestrator だけそれ付きで作られています。
+信頼させる）が前提で、expense-orchestrator だけそれ付きで作られている。
 
 Registry 経由でサブエージェントを解決するには `USE_AGENT_REGISTRY=1` を
-セットしてオーケストレータを起動します（URL のハードコードが消えます）。
+セットしてオーケストレータを起動する（URL のハードコードが消える）。
 
-> Agent Registry への登録は `agents-cli publish` では行えません
+> Agent Registry への登録は `agents-cli publish` では行えない
 > （publish の対象は Gemini Enterprise のみ）。`scripts/gcp_register_registry.sh` の
-> gcloud を使います。
+> gcloud を使う。
 
 ## うまく動かないとき
 
-`make run` は起動に失敗すると黙って成功を装わず、非ゼロ終了して
-`.logs/*.log` の末尾を表示します。まずそれを読んでください。
+`make run` は起動に失敗した場合、成功として扱わずに非ゼロ終了して
+`.logs/*.log` の末尾を表示する。まずはそのログを確認する。
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
@@ -207,7 +261,7 @@ Registry 経由でサブエージェントを解決するには `USE_AGENT_REGIS
 
 ## 押さえどころ
 
-- `APP_URL` は bind しない。uvicorn の `--port` とズレると到達不能な URL がカードに載る
+- `APP_URL` は bind しない。uvicorn の `--port` と食い違うと到達不能な URL がカードに載る
 - カードのパスは `/a2a/{App.name}/.well-known/agent-card.json`。ルート直下は 404
 - `RemoteA2aAgent` の `use_legacy` は既定 `True`。新統合は明示的に `False`
 - `app/fast_api_app.py` / `app/app_utils/*` は生成物。**A2A のコードは手書きしない**

@@ -6,18 +6,18 @@ header: 'ADK A2A + GCP エージェント統制'
 ---
 
 <!--
-このリポジトリを理解するための資料です。読んで分かることを目的にしていて、
-発表用の台本ではありません。1枚ごとに1つの論点を、その場で完結するように
-書いてあります。
+このリポジトリを理解するための資料。読んで分かることを目的にしていて、
+発表用の台本ではない。1枚ごとに1つの論点を、その場で完結するように
+書いてある。
 
   marp docs/slides.md -o slides.html
   marp docs/slides.md --pdf
 
-素の Markdown としてもそのまま読めます。
+素の Markdown としてもそのまま読める。
 
-方針: `make` ターゲットは全て素のコマンドに展開しています。
+方針: `make` ターゲットは全て素のコマンドに展開している。
 `agents-cli` のように内部を展開できないものは、実際に何を実行しているかを
-日本語で説明しています。
+日本語で説明している。
 -->
 
 # ADK の A2A と GCP のエージェント統制
@@ -45,7 +45,7 @@ Agent Identity / Agent Registry / Agent Gateway / Model Armor
 ## このサンプルが答える問い
 
 **Q1. 「エージェント同士が喋る」とは具体的に何をしているのか**
-→ カードを取得し、カードに書かれた URL へ JSONRPC を投げている。それだけ
+→ カードを取得し、カードに書かれた URL へ JSONRPC を送っている。それだけ
 
 **Q2. そのエージェントは誰の権限で動いているのか**
 → Agent Identity（SPIFFE ID）。サービスアカウントではない
@@ -91,7 +91,7 @@ Makefile                  3つを束ねる薄いラッパ
 ```bash
 cd receipt-agent
 agents-cli playground        # このエージェント単体の UI
-agents-cli run "R-1001 は?"  # 1発実行
+agents-cli run "R-1001 は?"  # 単発実行
 ```
 
 > ルートの Makefile は「3つに同じ操作を流す」だけのもの。
@@ -102,7 +102,7 @@ agents-cli run "R-1001 は?"  # 1発実行
 ## 中核の考え方② 呼ぶ側と公開側は非対称
 
 ```
-expense-orchestrator （呼ぶ側 / RemoteA2aAgent x2）  ← playground が抱える。サーブしない
+expense-orchestrator （呼ぶ側 / RemoteA2aAgent x2）  ← playground が読み込む。サーブしない
    ├── receipt-agent  （公開側 :18001）             ← uvicorn でサーブする
    └── policy-agent   （公開側 :18002）             ← uvicorn でサーブする
 ```
@@ -114,7 +114,7 @@ expense-orchestrator （呼ぶ側 / RemoteA2aAgent x2）  ← playground が抱�
 | A2A | 生やす（`/a2a/app`） | 消費する（`RemoteA2aAgent`） |
 
 > **オーケストレータは起動してもポートを開かない。**
-> 「3体あるからサーバも3つ」と思うと、最初にここで混乱する
+> 「3体あるからサーバも3つ」と思うと、最初はここで戸惑いやすい
 
 ---
 
@@ -129,11 +129,11 @@ RemoteA2aAgent                     receipt-agent (uvicorn :18001)
       └── 2. A2A JSONRPC（カード記載の URL 宛）─────────→│
 ```
 
-**カードを取る → カードに書かれた URL へ投げる**
+**カードを取る → カードに書かれた URL へ送る**
 
 > このサンプルで踏む罠は、ほぼ全部この2段のどちらかで起きる。
 > - 1段目が失敗 → カードのパス違い（罠②）/ `--url` の渡し方（罠③）
-> - 2段目が失敗 → カードの URL と実際の listen 先がズレている（罠①）
+> - 2段目が失敗 → カードの URL と実際の listen 先が食い違っている（罠①）
 
 ---
 
@@ -145,9 +145,9 @@ RemoteA2aAgent                     receipt-agent (uvicorn :18001)
 |---|---|---|
 | agents-cli を入れる | `uv tool install google-agents-cli` | — |
 | 依存を入れる | `agents-cli install` | `uv sync` |
-| Python を叩く | `uv run python ...` | プロジェクトの `.venv` を自動選択 |
+| Python を実行する | `uv run python ...` | プロジェクトの `.venv` を自動選択 |
 | UI を出す | `agents-cli playground` | `uv run adk web . --host --port` |
-| 1発実行 | `agents-cli run "..."` | ローカル or `--url` でリモート |
+| 単発で実行する | `agents-cli run "..."` | ローカル or `--url` でリモート |
 | デプロイ | `agents-cli deploy` | Agent Runtime へ（SDK 経由） |
 
 > `uv sync` が各プロジェクトの `.venv` を作り、`uv run` がそれを自動で選ぶ。
@@ -168,7 +168,7 @@ RemoteA2aAgent                     receipt-agent (uvicorn :18001)
 - 左 = uvicorn が実際に bind するポート
 - 右 = カードに広告する URL（`APP_URL=http://localhost:18001`）
 
-Makefile の `serve_agent` マクロが両方を同時に渡して同期させている。ズレると罠①
+Makefile の `serve_agent` マクロが両方を同時に渡して同期させている。食い違うと罠①
 
 ---
 
@@ -256,6 +256,54 @@ uv sync
 
 ---
 
+## エージェントは対話で作る
+
+scaffold 直後の `app/agent.py` は**天気ツールのテンプレート**（`get_weather` /
+`get_current_time`）。ここから各エージェントへの作り込みは、
+**コーディングエージェントへのプロンプト**で行う:
+
+```bash
+uvx google-agents-cli setup   # ADK スキル一式を入れる（初回のみ）
+cd receipt-agent
+claude                        # プロジェクトの CLAUDE.md が文脈として読み込まれる
+```
+
+プロンプトの型（3体とも共通）:
+
+- **役割の境界を伝える** — receipt = 事実だけ / policy = 判定だけ /
+  orchestrator = 委譲と集約だけ
+- **生成物に触らせない** — `fast_api_app.py` / `app_utils/` / manifest は対象外と明言
+- **確認までさせる** — 終わったら `agents-cli run "..."` で動作確認
+
+> 「どのファイルをどう書き換えるか」より境界を伝えるほうが崩れない。
+> この境界はそのまま Part 2 の権限分離の単位になる
+
+---
+
+## receipt-agent を作るプロンプト
+
+```text
+テンプレートの get_weather / get_current_time を置き換えて、
+領収書の読み取りエージェントにして。
+
+- 役割: 領収書に関する「事実」だけを返す。判定はしない
+- ツール1 extract_receipt(receipt_id): R-XXXX 形式の ID から
+  金額・日付・店舗・カテゴリを返す。本来は OCR + BigQuery だが、
+  ローカルで完結するようモックデータ3件（R-1001〜R-1003）で代替
+- ツール2 list_receipts(): 登録済み ID の一覧を返す
+- Agent の name は receipt_agent。instruction にも
+  「事実だけを返す。判定はしない」と書く
+- モデルは環境変数 ADK_MODEL で差し替えられるようにする（既定は今のまま）
+- App(name="app") と生成物（fast_api_app.py / app_utils）は触らない
+
+終わったら agents-cli run "R-1001 は?" で引けることを確認して。
+```
+
+> 結果が次のスライドの `app/agent.py`。モデルを指示なく変えさせないこと
+> （変えてよいのは明示的に頼んだところだけ）
+
+---
+
 ## 公開側のコード: receipt-agent
 
 `receipt-agent/app/agent.py`
@@ -286,6 +334,28 @@ app = App(root_agent=root_agent, name="app")   # ← name はディレクトリ�
 
 ---
 
+## policy-agent を作るプロンプト
+
+```text
+テンプレートを経費規程チェックのエージェントにして。
+
+- ツール check_policy(amount, category): 上限表
+  （会食 10000 / 消耗品 5000 / 宿泊 15000 / 交通費 30000）と照合し、
+  OK / VIOLATION / REVIEW（未知カテゴリ）のいずれかを返す
+- 判定ロジックは check_policy の中に閉じる。LLM に判定させない。
+  LLM の仕事は「ツールを呼ぶこと」と「結果を返すこと」だけ
+- Agent の name は policy_agent
+- App(name="app") と生成物は触らない
+
+終わったら agents-cli run "宿泊で 45000 円は?" で
+VIOLATION が返ることを確認して。
+```
+
+> 「LLM に判定させない」を書き忘れると、上限表を instruction に書いて
+> モデルに比較させる実装になりやすい。境界は明文化する
+
+---
+
 ## 公開側のコード: policy-agent
 
 `policy-agent/app/agent.py`
@@ -304,7 +374,7 @@ def check_policy(amount: int, category: str) -> dict:
 ```
 
 > **判定を LLM に任せず関数に閉じている。** 規程は決定的に評価されるべきで、
-> 金額の大小比較を確率的なモデルに投げる理由が無い。
+> 金額の大小比較を確率的なモデルに委ねる理由が無い。
 > LLM が担当するのは「どのツールを呼ぶか」と「結果をどう報告するか」だけ
 
 ---
@@ -355,7 +425,7 @@ APP_URL=http://localhost:18002 nohup uv run --directory policy-agent \
 
 ---
 
-## 起動を「黙って失敗させない」
+## 起動の失敗を見逃さない
 
 ```bash
 # 3) カードが返るまで最大60秒待つ。返らなければログを出して非ゼロ終了
@@ -369,7 +439,7 @@ tail -n 20 .logs/*.log
 exit 1
 ```
 
-> **待ちループに失敗分岐が無いと、死んだサーバが健全に見える。**
+> **待ちループに失敗分岐が無いと、停止したサーバが正常に見える。**
 > 成功バナーを無条件に出すと、1つも起動していなくても「起動しました」になる
 
 ---
@@ -431,7 +501,7 @@ curl -s localhost:18002/a2a/app/.well-known/agent-card.json | python3 -m json.to
 
 `/a2a/` の後ろは `app/agent.py` の `App(name=...)`。
 
-> 素の ADK（`to_a2a()`）だとルート直下に出るので、そちらの資料を見ていると間違える。
+> 素の ADK（`to_a2a()`）だとルート直下に出るので、そちらの資料を参照していると間違えやすい。
 > scaffold 構成では必ず `/a2a/{App.name}` の下
 
 ---
@@ -481,6 +551,30 @@ card_url = f"{a2a_base}{AGENT_CARD_WELL_KNOWN_PATH}"
 
 ---
 
+## expense-orchestrator を作るプロンプト
+
+```text
+テンプレートを、receipt_agent と policy_agent を A2A で呼ぶ
+オーケストレータにして。
+
+- sub_agents に RemoteA2aAgent を2つ。カードは
+  http://localhost:18001 / :18002 の /a2a/app/.well-known/agent-card.json
+  （環境変数 RECEIPT_AGENT_URL / POLICY_AGENT_URL で上書きできるように）
+- use_legacy=False を明示する（既定 True のままだと旧経路で動く）
+- USE_AGENT_REGISTRY=1 のときは Agent Registry から名前で解決する
+  分岐も用意する（agents/receipt-agent / agents/policy-agent）
+- instruction: 内容確認は receipt_agent に、規程判定は policy_agent に
+  委譲し、両方の結果が揃ってから、違反があれば理由つきで報告する
+- 自前のツールは持たせない。事実も判定も持たない
+
+A2A の接続コード自体は書かないこと（RemoteA2aAgent を使うだけ）。
+```
+
+> 結果が次のスライド。「自前のツールを持たせない」が無いと、
+> オーケストレータに事実や判定が入り込み、境界が崩れる
+
+---
+
 ## 呼ぶ側: expense-orchestrator/app/agent.py
 
 ```python
@@ -502,7 +596,7 @@ root_agent = Agent(name="expense_orchestrator", model=..., sub_agents=sub_agents
                 "両方の結果が揃ってから、違反があれば理由つきで報告する。")
 ```
 
-> `description` は LLM が「どちらに投げるか」を決める材料になる
+> `description` は LLM が「どちらに委譲するか」を決める材料になる
 
 ---
 
@@ -535,7 +629,7 @@ uv run adk web . --host localhost --port 18000 --allow_origins '*'
 ```
 
 > **`make chat` と `make run` は独立している。** playground はオーケストレータを
-> 抱えるだけで、receipt/policy を起動してはくれない。先に `make run`
+> 読み込むだけで、receipt/policy は起動しない。先に `make run`
 
 ---
 
@@ -573,7 +667,7 @@ pkill -f "[a]pp\.fast_api_app" 2>/dev/null || true
 
 > **`[a]pp` と書いてあるのは誤植ではない。**
 > `pkill -f "app.fast_api_app"` と書くと、pkill 自身のコマンドラインが
-> パターンに一致して **make ごと巻き添えで死ぬ**。
+> パターンに一致して **make ごと終了してしまう**。
 > `[a]pp` は `app` にマッチするが、文字列 `[a]pp` 自身にはマッチしない
 
 ---
@@ -586,14 +680,14 @@ pkill -f "[a]pp\.fast_api_app" 2>/dev/null || true
 |---|---|
 | `agents-cli install` | `uv sync` |
 | `agents-cli playground` | `uv run adk web . --host --port --allow_origins '*'` |
-| `agents-cli run "..."` | ローカルサーバを一時起動して1発投げる |
+| `agents-cli run "..."` | ローカルサーバを一時起動して1回だけ送る |
 | `agents-cli run --url --mode a2a` | `{url}/a2a/{app}` にカード取得 → JSONRPC |
 | `agents-cli lint` | ruff + ty + codespell |
 | `agents-cli deploy` | manifest の `deployment_target` を見て分岐（後述） |
 | `agents-cli publish` | Gemini Enterprise への登録のみ |
 
 > `agents-cli <command> --help` の末尾に `Source:` 行があり、
-> 実装ファイルの絶対パスが出る。困ったらそれを読む
+> 実装ファイルの絶対パスが出る。迷ったらそれを読む
 
 ---
 
@@ -632,7 +726,7 @@ principal://agents.global.org-${ORG_ID}.system.id.goog
 - **trust domain に組織 ID が埋まる** → 組織なしプロジェクトでは成立しない
 - **長期鍵が存在しない** → 持ち出せる秘密が無い
 
-> 従来のサービスアカウントとの最大の違い。JSON キーを配って回る運用が
+> 従来のサービスアカウントとの最大の違い。JSON キーを配布する運用が
 > 構造的にできない。漏洩する鍵が無いので、鍵のローテーションという
 > 概念自体が消える
 
@@ -804,7 +898,7 @@ sub_agents = _registry_agents() if os.environ.get("USE_AGENT_REGISTRY") == "1" \
 |---|---|
 | URL 直指定（ローカル完結） | **名前だけで解決**（要 GCP） |
 
-> 名前で解決できると、エージェントの引っ越しが呼ぶ側に影響しなくなる
+> 名前で解決できると、エージェントの移設が呼ぶ側に影響しなくなる
 
 ---
 
@@ -931,8 +1025,8 @@ done
 | IAP 認可 | `DRY_RUN` | `ENFORCED` |
 
 1. まず**ログだけ**取る
-2. 何が引っかかるかを確認する
-3. 誤検知を潰す
+2. 何が検知されるかを確認する
+3. 誤検知を解消する
 4. **それから**遮断に上げる
 
 > 最初から遮断で入れると、業務が止まってから原因を探すことになる。
@@ -960,7 +1054,7 @@ scaffold 時: --agent-gateway ──────────→ deploy --agent-g
 
 ## 罠まとめ
 
-- `APP_URL` は **bind しない**。uvicorn の `--port` とズレると到達不能な URL が広告される
+- `APP_URL` は **bind しない**。uvicorn の `--port` と食い違うと到達不能な URL が広告される
   （未設定だと `http://0.0.0.0:8000`）
 - カードのパスは `/a2a/{App.name}/.well-known/agent-card.json`。ルート直下は 404
 - `agents-cli run --mode a2a --url` には**ベース URL**を渡す（`/a2a/app` は CLI が足す）
@@ -985,7 +1079,7 @@ scaffold 時: --agent-gateway ──────────→ deploy --agent-g
 | カード取得が 404 | ルート直下を見ている | `/a2a/app/.well-known/agent-card.json` |
 | `agents-cli run` が 404 | `--url` に `/a2a/app` まで書いた | ベース URL を渡す |
 | 対話がつながらない | `make run` していない | 先に `make run` |
-| `make stop` で make ごと死ぬ | `pkill` パターンが自分に一致 | `[a]pp\.fast_api_app` と書く |
+| `make stop` で make ごと終了する | `pkill` パターンが自分に一致 | `[a]pp\.fast_api_app` と書く |
 
 ログは `.logs/receipt-agent.log` / `.logs/policy-agent.log`
 
@@ -993,11 +1087,11 @@ scaffold 時: --agent-gateway ──────────→ deploy --agent-g
 
 ## 理解の要点
 
-**A2A は「カードを取る → カードの URL に投げる」の2段構え**
-罠はほぼ全部この2段のどこかにある。`APP_URL` のズレも、パスの違いも
+**A2A は「カードを取る → カードの URL に送る」の2段構え**
+罠はほぼ全部この2段のどこかにある。`APP_URL` の食い違いも、パスの違いも
 
 **A2A のコードは書かない。scaffold が生成したものを使う**
-バージョン差の吸収を自分で抱え込まない。触るのは `app/agent.py` だけ
+バージョン差の吸収を自分で引き受けない。触るのは `app/agent.py` だけ
 
 **統制は身分・名簿・出口・検査の4層**
 どれも後から強くできる形で入る。だから弱く入れて観察してから締める
@@ -1045,7 +1139,7 @@ done
 ```
 
 > ポート衝突が bind 失敗として現れないケース（別プロセスがそのポートで
-> 正常に応答してしまう）があるため、起動前に潰している
+> 正常に応答してしまう）があるため、起動前に検査している
 
 ---
 
